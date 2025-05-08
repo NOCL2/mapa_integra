@@ -1,0 +1,485 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Mapa en Tiempo Real</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <style>
+   * {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: 'Segoe UI', sans-serif;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  background-color: #f4f6f9;
+}
+
+#map {
+  flex-grow: 1;
+  height: 100%;
+  width: 100%;
+}
+
+/* Panel inferior de usuarios */
+#userPanel {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 220px; /* para no tapar clientPanel */
+  background-color: white;
+  border-top: 1px solid #ccc;
+  padding: 10px;
+  overflow-x: auto;
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  z-index: 1000;
+  box-shadow: 0 -2px 6px rgba(0, 0, 0, 0.1);
+}
+
+/* Panel lateral de sucursales/clientes */
+#clientPanel {
+  position: fixed;
+  right: 0;
+  top: 0;
+  bottom: 50px; /* deja espacio para userPanel */
+  width: 220px;
+  background-color: white;
+  border-left: 1px solid #ccc;
+  overflow-y: auto;
+  padding: 10px;
+  z-index: 1000;
+  box-shadow: -2px 0 6px rgba(0, 0, 0, 0.05);
+}
+
+/* Buscador de clientes */
+#clientSearch {
+  width: 100%;
+  padding: 8px;
+  margin-bottom: 10px;
+  border: 1px solid #ccc;
+  border-radius: 6px;
+  font-size: 14px;
+}
+
+/* Botones base */
+.client-btn,
+.user-btn {
+  border: none;
+  padding: 8px 14px;
+  border-radius: 20px;
+  font-size: 14px;
+  cursor: pointer;
+  white-space: nowrap;
+  background-color: #e9ecef;
+  color: #333;
+  transition: all 0.2s ease-in-out;
+}
+
+.client-btn:hover,
+.user-btn:hover {
+  background-color: #ced4da;
+}
+
+/* Activo seleccionado */
+.client-btn.active,
+.user-btn.active {
+  background-color: #007bff;
+  color: white;
+  font-weight: bold;
+}
+
+/* Títulos dentro de clientPanel */
+#clientPanel div[style*="font-weight: bold"] {
+  font-size: 14px;
+  color: #333;
+  margin: 10px 0 5px;
+  border-bottom: 1px solid #ddd;
+  padding-bottom: 3px;
+}
+
+.leaflet-marker-icon.pulse {
+  animation: pulse 2s infinite;
+}
+
+@keyframes pulse {
+  0% { transform: scale(1); opacity: 1; }
+  50% { transform: scale(1.2); opacity: 0.6; }
+  100% { transform: scale(1); opacity: 1; }
+}
+
+
+  </style>
+</head>
+<body>
+
+<div id="map"></div>
+<div id="userPanel"></div>
+
+<div id="clientPanel">
+    <input type="text" id="clientSearch" placeholder="Buscar cliente...">
+    <div id="clientList"></div>
+  </div>
+  
+<!-- Firebase -->
+<script src="https://www.gstatic.com/firebasejs/9.6.1/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.6.1/firebase-database-compat.js"></script>
+
+<!-- Leaflet -->
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+<script>
+  // Configuración de Firebase
+  const firebaseConfig = {
+    apiKey: "AIzaSyArGqHEKmRB11MbJMYvIqzRg-rbTQmNTEk",
+    authDomain: "com.example.flotillapp.firebaseapp.com",
+    databaseURL: "https://flotillapp-a8326-default-rtdb.firebaseio.com/",
+    projectId: "flotillapp-a8326",
+    storageBucket: "TU_BUCKET.appspot.com",
+    messagingSenderId: "TU_ID_MENSAJES",
+    appId: "TU_APP_ID"
+  };
+
+  firebase.initializeApp(firebaseConfig);
+  const database = firebase.database();
+
+  const map = L.map('map').setView([23.6345, -102.5528], 5);
+  L.tileLayer('https://api.mapbox.com/styles/v1/mapbox/streets-v12/tiles/{z}/{x}/{y}?access_token=pk.eyJ1IjoibGVvbmFyZG8yMDI1IiwiYSI6ImNtYWZ3MzRidTA3azYyanB0MGF2bDhtd2gifQ.ryAZQ1MMiwS2nHCjIioB9A', {
+  tileSize: 512,
+  zoomOffset: -1,
+  attribution: '© Mapbox © OpenStreetMap',
+  accessToken: 'pk.eyJ1IjoibGVvbmFyZG8yMDI1IiwiYSI6ImNtYWZ3MzRidTA3azYyanB0MGF2bDhtd2gifQ.ryAZQ1MMiwS2nHCjIioB9A'
+}).addTo(map);
+
+
+
+  const usuarioIcon = L.icon({
+    iconUrl: 'https://cdn-icons-png.flaticon.com/512/149/149071.png',
+    iconSize: [30, 30],
+    iconAnchor: [15, 30],
+    popupAnchor: [0, -30]
+  });
+
+  const costcoIcon = L.icon({
+    iconUrl: 'img/costco.png',
+    iconSize: [60, 60],
+    iconAnchor: [30, 60],
+    popupAnchor: [0, -60]
+  });
+
+  const metlifeIcon = L.icon({
+  iconUrl: 'img/metlife.png', // Asegúrate de tener esta imagen en tu carpeta 'img'
+  iconSize: [30, 30],
+  iconAnchor: [30, 60],
+  popupAnchor: [0, -60]
+});
+
+
+  // Lista completa de tiendas Costco en México con coordenadas
+const tiendasCostco = [
+  { nombre: "Costco Aguascalientes", lat: 21.9162434, long: -102.2878865 },
+  { nombre: "Costco Cancún", lat: 21.161908, long: -86.847082 },
+  { nombre: "Costco Celaya", lat: 20.5277806, long: -100.8230954 },
+  { nombre: "Costco Chihuahua", lat: 28.648768, long: -106.13049 },
+  { nombre: "Costco Ciudad Obregón", lat: 27.4938355, long: -109.9562334 },
+  { nombre: "Costco Culiacán", lat: 24.7849316, long: -107.3831347 },
+  { nombre: "Costco Cuernavaca", lat: 18.9314775, long: -99.2156341 },
+  { nombre: "Costco Guadalajara Independencia", lat: 20.7161327, long: -103.3585025 },
+  { nombre: "Costco Guadalajara Vallarta", lat: 20.6736762, long: -103.4116224 },
+  { nombre: "Costco Hermosillo", lat: 29.0879948, long: -110.9615632 },
+  { nombre: "Costco Iztapalapa", lat: 19.3407221, long: -99.0597532 },
+  { nombre: "Costco León", lat: 21.1062007, long: -101.6543655 },
+  { nombre: "Costco Los Cabos", lat: 22.90427532, long: -109.882454 },
+  { nombre: "Costco Mérida", lat: 21.0078936, long: -89.5977385 },
+  { nombre: "Costco Mexicali", lat: 32.60663671, long: -115.4343584 },
+  { nombre: "Costco Morelia", lat: 19.7005943, long: -101.2115937 },
+  { nombre: "Costco Puebla", lat: 19.0312635, long: -98.2312313 },
+  { nombre: "Costco Querétaro", lat: 20.614186, long: -100.408752 },
+  { nombre: "Costco Saltillo", lat: 25.4466702, long: -100.980366 },
+  { nombre: "Costco San Luis Potosí", lat: 22.1339281, long: -100.9356276 },
+  { nombre: "Costco Santa Fe", lat: 19.3592064, long: -99.2816332 },
+  { nombre: "Costco Satélite", lat: 19.5053399, long: -99.2469326 },
+  { nombre: "Costco Toluca", lat: 19.3092232, long: -99.6413851 },
+  { nombre: "Costco Tijuana Otay", lat: 32.50854033, long: -116.964269 },
+  { nombre: "Costco Tijuana Río", lat: 32.53191667, long: -117.0289102 },
+  { nombre: "Costco Torreón", lat: 25.5500615, long: -103.4206335 },
+  { nombre: "Costco Tuxtla Gutiérrez", lat: 16.747481, long: -93.1303325 },
+  { nombre: "Costco Vallarta", lat: 20.6407089, long: -105.2233405 },
+  { nombre: "Costco Veracruz", lat: 19.1598081, long: -96.1351381 },
+  { nombre: "Costco Villahermosa", lat: 17.9987894, long: -92.9323514 },
+  { nombre: "Costco Villa Coapa", lat: 19.28435907, long: -99.13865463 },
+  { nombre: "Costco Zapopan", lat: 20.7259585, long: -103.4061918 },
+  { nombre: "Costco Arboledas", lat: 19.5333, long: -99.2167 },
+  { nombre: "Costco Polanco", lat: 19.435113, long: -99.192708 },
+  { nombre: "Costco Ensenada", lat: 31.81802738, long: -116.5969888 },
+  { nombre: "Costco Juárez", lat: 31.70232033, long: -106.4231661 }
+];
+const ubicacionesMetlife = [
+  { nombre: "Metlife CDMX Reforma", lat: 19.4326018, long: -99.1332049 },
+  { nombre: "Metlife Monterrey Centro", lat: 25.6866142, long: -100.3161126 },
+  { nombre: "Metlife Guadalajara Centro", lat: 20.6596988, long: -103.3496092 },
+  { nombre: "Metlife Puebla Centro", lat: 19.0414398, long: -98.2062727 }
+];
+
+  
+  const marcadoresMetlife = {};
+
+ubicacionesMetlife.forEach(ubicacion => {
+  const marker = L.marker([ubicacion.lat, ubicacion.long], { icon: metlifeIcon })
+    .bindPopup(`Metlife: ${ubicacion.nombre}`);
+  marker.addTo(map);
+  marcadoresMetlife[ubicacion.nombre] = marker;
+});
+
+const clientListDiv = document.getElementById('clientList');
+const clientSearchInput = document.getElementById('clientSearch');
+const marcadoresCostco = {};
+
+
+let clienteSeleccionado = "todos";
+let usuarioSeleccionado = "todos";
+
+// Crea botones de cliente
+function cargarClientes() {
+  clientListDiv.innerHTML = "";
+
+  const btnMostrarTodos = document.createElement('button');
+  btnMostrarTodos.textContent = "Mostrar todos";
+  btnMostrarTodos.className = "client-btn";
+  btnMostrarTodos.onclick = () => {
+    clienteSeleccionado = "todos";
+    actualizarVisibilidadGeneral();
+    document.querySelectorAll('.client-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  };
+  clientListDiv.appendChild(btnMostrarTodos);
+
+  // Agrupación Costco
+  const costcoHeader = document.createElement('div');
+  costcoHeader.style.fontWeight = "bold";
+  costcoHeader.style.marginTop = "10px";
+  costcoHeader.textContent = "Costco";
+  clientListDiv.appendChild(costcoHeader);
+
+  const btnCostcoGroup = document.createElement('button');
+  btnCostcoGroup.textContent = "Mostrar todas las de Costco";
+  btnCostcoGroup.className = "client-btn";
+  btnCostcoGroup.onclick = () => {
+    clienteSeleccionado = "grupo_costco";
+    actualizarVisibilidadGeneral();
+    document.querySelectorAll('.client-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  };
+  clientListDiv.appendChild(btnCostcoGroup);
+
+  tiendasCostco.forEach(tienda => {
+    const btn = document.createElement('button');
+    btn.textContent = tienda.nombre;
+    btn.className = "client-btn";
+    btn.onclick = () => {
+      clienteSeleccionado = tienda.nombre;
+      actualizarVisibilidadGeneral();
+      document.querySelectorAll('.client-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    };
+    clientListDiv.appendChild(btn);
+  });
+
+  // Agrupación Metlife
+  const metlifeHeader = document.createElement('div');
+  metlifeHeader.style.fontWeight = "bold";
+  metlifeHeader.style.marginTop = "10px";
+  metlifeHeader.textContent = "Metlife";
+  clientListDiv.appendChild(metlifeHeader);
+
+  const btnMetlifeGroup = document.createElement('button');
+  btnMetlifeGroup.textContent = "Mostrar todas las de Metlife";
+  btnMetlifeGroup.className = "client-btn";
+  btnMetlifeGroup.onclick = () => {
+    clienteSeleccionado = "grupo_metlife";
+    actualizarVisibilidadGeneral();
+    document.querySelectorAll('.client-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  };
+  clientListDiv.appendChild(btnMetlifeGroup);
+
+  ubicacionesMetlife.forEach(ubicacion => {
+    const btn = document.createElement('button');
+    btn.textContent = ubicacion.nombre;
+    btn.className = "client-btn";
+    btn.onclick = () => {
+      clienteSeleccionado = ubicacion.nombre;
+      actualizarVisibilidadGeneral();
+      document.querySelectorAll('.client-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+    };
+    clientListDiv.appendChild(btn);
+  });
+}
+
+
+function actualizarVisibilidadGeneral() {
+  // Filtrado de tiendas Costco
+  for (let nombre in marcadoresCostco) {
+    if (
+      clienteSeleccionado === "todos" ||
+      clienteSeleccionado === "grupo_costco" ||
+      nombre === clienteSeleccionado
+    ) {
+      marcadoresCostco[nombre].addTo(map);
+    } else {
+      map.removeLayer(marcadoresCostco[nombre]);
+    }
+  }
+
+  // Filtrado de Metlife
+  for (let nombre in marcadoresMetlife) {
+    if (
+      clienteSeleccionado === "todos" ||
+      clienteSeleccionado === "grupo_metlife" ||
+      nombre === clienteSeleccionado
+    ) {
+      marcadoresMetlife[nombre].addTo(map);
+    } else {
+      map.removeLayer(marcadoresMetlife[nombre]);
+    }
+  }
+
+  // Filtrado de usuarios
+  for (let id in marcadoresUsuarios) {
+    if (usuarioSeleccionado === "todos" || id === usuarioSeleccionado) {
+      marcadoresUsuarios[id].addTo(map);
+    } else {
+      map.removeLayer(marcadoresUsuarios[id]);
+    }
+  }
+}
+
+// Inicializa marcadores y carga botones
+tiendasCostco.forEach(tienda => {
+  const marker = L.marker([tienda.lat, tienda.long], { icon: costcoIcon })
+    .bindPopup(`Tienda: ${tienda.nombre}`);
+  marker.addTo(map);
+  marcadoresCostco[tienda.nombre] = marker;
+});
+
+cargarClientes();
+
+// Filtrar por texto en input
+clientSearchInput.addEventListener('input', () => {
+  const texto = clientSearchInput.value.toLowerCase();
+  const botones = clientListDiv.querySelectorAll('.client-btn');
+  botones.forEach(btn => {
+    if (btn.textContent.toLowerCase().includes(texto) || btn.textContent === "Mostrar todos") {
+      btn.style.display = 'block';
+    } else {
+      btn.style.display = 'none';
+    }
+  });
+});
+  const marcadoresUsuarios = {};
+const userPanel = document.getElementById('userPanel');
+const ubicacionesRef = database.ref('Ubicaciones');
+let usuarios = [];
+
+function cargarUsuarios() {
+  userPanel.innerHTML = "";
+
+  // Crear buscador
+  const buscador = document.createElement("input");
+  buscador.type = "text";
+  buscador.placeholder = "Buscar usuario...";
+  buscador.className = "user-search";
+  buscador.style.marginBottom = "10px";
+  buscador.style.width = "100%";
+  buscador.style.padding = "5px";
+  buscador.style.borderRadius = "5px";
+  buscador.style.border = "1px solid #ccc";
+  buscador.style.width = "300px"; 
+  userPanel.appendChild(buscador);
+
+  // Botón para mostrar todos
+  const btnMostrarTodos = document.createElement('button');
+  btnMostrarTodos.textContent = "Mostrar todos";
+  btnMostrarTodos.className = "user-btn";
+  btnMostrarTodos.onclick = () => {
+    usuarioSeleccionado = "todos";
+    actualizarVisibilidadGeneral();
+  document.querySelectorAll('.user-btn').forEach(b => b.classList.remove('active'));
+  btnTodos.classList.add('active');
+
+  };
+  userPanel.appendChild(btnMostrarTodos);
+
+  // Contenedor para los botones (filtrables)
+  const contenedorUsuarios = document.createElement("div");
+  contenedorUsuarios.id = "contenedorUsuarios";
+  contenedorUsuarios.style.display = "flex";
+  contenedorUsuarios.style.gap = "10px";
+  userPanel.appendChild(contenedorUsuarios);
+
+  // Ordenar por nombre
+  const usuariosOrdenados = [...usuarios].sort((a, b) =>
+    a.nombre.localeCompare(b.nombre)
+  );
+
+  usuariosOrdenados.forEach(usuario => {
+    const btn = document.createElement('button');
+    btn.textContent = usuario.nombre;
+    btn.className = "user-btn";
+    btn.dataset.nombre = usuario.nombre.toLowerCase(); // para búsqueda
+    btn.onclick = () => {
+      usuarioSeleccionado = usuario.id;
+      actualizarVisibilidadGeneral();
+       // Marcar botón activo
+    document.querySelectorAll('.user-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    };
+    contenedorUsuarios.appendChild(btn);
+  });
+
+  // Evento para filtrar
+  buscador.addEventListener("input", () => {
+    const filtro = buscador.value.toLowerCase();
+    const botones = contenedorUsuarios.querySelectorAll("button");
+    botones.forEach(btn => {
+      const nombre = btn.dataset.nombre;
+      btn.style.display = nombre.includes(filtro) ? "block" : "none";
+    });
+  });
+}
+
+ubicacionesRef.on('value', (snapshot) => {
+  const datos = snapshot.val();
+  usuarios = [];
+
+  for (const id in datos) {
+    const { lat, long, user } = datos[id];
+    const nombreUsuario = user || id;
+    const latitud = parseFloat(lat);
+    const longitud = parseFloat(long);
+
+    usuarios.push({ id, nombre: nombreUsuario });
+
+    if (!marcadoresUsuarios[id]) {
+      marcadoresUsuarios[id] = L.marker([latitud, longitud], { icon: usuarioIcon })
+        .bindPopup(`Usuario: ${nombreUsuario}`)
+        .addTo(map);
+    } else {
+      marcadoresUsuarios[id].setLatLng([latitud, longitud]);
+    }
+  }
+
+  cargarUsuarios();
+  actualizarVisibilidadGeneral();
+});
+
+</script>
+
+</body>
+</html>
